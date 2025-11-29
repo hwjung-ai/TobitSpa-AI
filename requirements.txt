@@ -1,0 +1,31 @@
+# Web Framework
+panel==1.8.3
+bokeh>=3.8.0
+param>=2.0.0
+
+# Data & Visualization
+pandas>=2.0.0
+matplotlib>=3.5.0
+networkx>=3.0
+pyvis>=0.3.0
+
+# LLM & AI
+langchain>=0.1.0
+langchain-openai>=1.0.0
+openai>=1.0.0
+
+# Utilities
+python-dotenv>=1.0.0
+reportlab>=4.0.0
+psycopg2-binary>=2.9.0
+neo4j>=5.13.0
+pdfplumber>=0.11.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+requests>=2.31.0
+
+# Optional: for advanced features
+# pgvector>=0.1.0
+# llamaindex>=0.9.0
+# sqlalchemy>=2.0.0

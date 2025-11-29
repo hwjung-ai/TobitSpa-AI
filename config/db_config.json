@@ -1,0 +1,15 @@
+﻿{
+  "postgres": {
+    "host": "115.21.12.151",
+    "port": 5432,
+    "dbname": "spadb",
+    "user": "spa",
+    "password": "spa1!"
+  },
+  "neo4j": {
+    "uri": "bolt://115.21.12.151:7687",
+    "user": "neo4j",
+    "password": "wemb1!"
+  },
+  "embed_model": "text-embedding-3-small"
+}
