@@ -46,6 +46,8 @@ Thumbs.db
 .openai_key
 *.log
 *.tmp
+uploads/
+config/db_config.json
 
 # Jupyter
 .ipynb_checkpoints/
