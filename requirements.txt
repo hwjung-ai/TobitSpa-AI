@@ -13,6 +13,10 @@ pyvis>=0.3.0
 langchain>=0.1.0
 langchain-openai>=1.0.0
 openai>=1.0.0
+# Retrieval
+llama-index>=0.10.55
+llama-index-vector-stores-psycopg>=0.1.4
+llama-index-graph-stores-neo4j>=0.1.5
 
 # Utilities
 python-dotenv>=1.0.0
@@ -24,8 +28,8 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
 requests>=2.31.0
+bytewax>=0.21.0
 
 # Optional: for advanced features
 # pgvector>=0.1.0
-# llamaindex>=0.9.0
 # sqlalchemy>=2.0.0

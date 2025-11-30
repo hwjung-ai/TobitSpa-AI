@@ -7,12 +7,11 @@ from typing import List, Optional
 
 import pdfplumber
 import psycopg2
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg2.extras import RealDictCursor
-
+from fastapi.responses import HTMLResponse
 from data_sources import _load_settings, _compute_embedding
-
 
 app = FastAPI(title="SPA Backend", version="0.1.0")
 
@@ -255,6 +254,147 @@ async def chat(query: str):
 
     answer_text = "검색 결과 상위 문서:\n" + "\n".join(snippets) if snippets else "검색 결과가 없습니다."
     return {"answer": answer_text, "sources": sources}
+
+
+@app.get("/pdf_viewer", response_class=HTMLResponse)
+async def get_pdf_viewer(file: str, page: int = 1, query: str = ""):
+    """PDF.js 뷰어를 iframe에 렌더링하고, 쿼리 텍스트를 하이라이트합니다."""
+    pdf_url = f"/uploads/{file}"
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>PDF Viewer</title>
+        <meta charset="utf-8">
+        <style>
+            body {{ margin: 0; background-color: #525659; display: flex; justify-content: center; align-items: flex-start; }}
+            #pdf-container {{
+                margin-top: 20px;
+                position: relative;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            }}
+            #pdf-canvas, #highlight-canvas {{
+                position: absolute;
+                top: 0;
+                left: 0;
+                direction: ltr;
+            }}
+        </style>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+        <script>
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        </script>
+    </head>
+    <body>
+        <div id="pdf-container">
+            <canvas id="pdf-canvas"></canvas>
+            <canvas id="highlight-canvas"></canvas>
+        </div>
+
+        <script>
+            const url = '{pdf_url}';
+            const pageNum = parseInt('{page}');
+            const query = `{query}`.trim();
+            
+            const pdfCanvas = document.getElementById('pdf-canvas');
+            const highlightCanvas = document.getElementById('highlight-canvas');
+            const container = document.getElementById('pdf-container');
+
+            async function renderPdf() {{
+                try {{
+                    const pdf = await pdfjsLib.getDocument(url).promise;
+                    const page = await pdf.getPage(pageNum);
+                    
+                    const scale = 1.5;
+                    const viewport = page.getViewport({{ scale: scale }});
+
+                    container.style.width = viewport.width + 'px';
+                    container.style.height = viewport.height + 'px';
+                    
+                    pdfCanvas.width = highlightCanvas.width = viewport.width;
+                    pdfCanvas.height = highlightCanvas.height = viewport.height;
+                    
+                    const pdfContext = pdfCanvas.getContext('2d');
+                    await page.render({{ canvasContext: pdfContext, viewport: viewport }}).promise;
+                    
+                    if (query) {{
+                        await highlightText(page, viewport, query);
+                    }}
+
+                }} catch (error) {{
+                    console.error('Error rendering PDF:', error);
+                    container.innerText = 'PDF를 로드할 수 없습니다. 파일 경로를 확인하세요.';
+                }}
+            }}
+
+            async function highlightText(page, viewport, searchText) {{
+                const textContent = await page.getTextContent();
+                const highlightContext = highlightCanvas.getContext('2d');
+                highlightContext.fillStyle = 'rgba(255, 255, 0, 0.4)';
+
+                const normalize = (str) => str.replace(/\\s+/g, '').toLowerCase();
+                const searchWords = normalize(searchText).split(/\\s+/).filter(Boolean);
+
+                if (searchWords.length === 0) return;
+
+                const textItems = textContent.items.map(item => ({{
+                    text: normalize(item.str),
+                    transform: item.transform,
+                    width: item.width,
+                    height: item.height,
+                    originalText: item.str
+                }}));
+
+                let matchStartIndex = -1;
+                let currentMatch = [];
+                
+                for (let i = 0; i < textItems.length; i++) {{
+                    const itemText = textItems[i].text;
+                    if (!itemText) continue;
+
+                    if (matchStartIndex === -1) {{
+                        if (searchWords[0].startsWith(itemText)) {{
+                            matchStartIndex = i;
+                            currentMatch.push(textItems[i]);
+                        }}
+                    }} else {{
+                        currentMatch.push(textItems[i]);
+                    }}
+
+                    const combinedText = currentMatch.map(it => it.text).join('');
+                    
+                    if (searchWords.join('').startsWith(combinedText)) {{
+                        if (searchWords.join('') === combinedText) {{
+                            drawHighlights(currentMatch, viewport, highlightContext);
+                            matchStartIndex = -1;
+                            currentMatch = [];
+                        }}
+                    }} else {{
+                        matchStartIndex = -1;
+                        currentMatch = [];
+                        // Retry current item in case it starts a new match
+                        i--; 
+                    }}
+                }}
+            }}
+
+            function drawHighlights(items, viewport, context) {{
+                items.forEach(item => {{
+                    const [scaleX, , , scaleY, offsetX, offsetY] = item.transform;
+                    const x = offsetX;
+                    const y = viewport.height - offsetY - (item.height * scaleY);
+
+                    context.fillRect(x, y, item.width * scaleX, item.height * scaleY);
+                }});
+            }}
+
+            renderPdf();
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
 
 
 # --- Panel에서 직접 호출할 수 있는 헬퍼 ---
