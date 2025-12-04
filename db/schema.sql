@@ -3,9 +3,20 @@
 -- This script is for PostgreSQL.
 
 -- Drop existing tables to ensure a clean setup
-DROP TABLE IF EXISTS chat_history, work_history, events, metrics, doc_chunks, documents, assets;
+DROP TABLE IF EXISTS chat_history, work_history, events, metrics, doc_chunks, documents, assets, uploads;
 
 -- Table for storing uploaded manual documents.
+CREATE TABLE uploads (
+	id bigserial NOT NULL,
+	title text NOT NULL,
+	owner text NULL,
+	tenant_id text NULL,
+	total_files int NULL,
+	status text NULL,
+	created_at timestamptz DEFAULT now() NULL,
+	CONSTRAINT uploads_pkey PRIMARY KEY (id)
+);
+
 CREATE TABLE documents (
 	id bigserial NOT NULL,
 	title text NOT NULL,
@@ -16,9 +27,13 @@ CREATE TABLE documents (
 	source_type text NULL,
 	original_path text NULL,
 	converted_pdf text NULL,
+	tenant_id text NULL,
+	upload_id bigint NULL,
 	created_at timestamptz DEFAULT now() NULL,
-	CONSTRAINT documents_pkey PRIMARY KEY (id)
+	CONSTRAINT documents_pkey PRIMARY KEY (id),
+	CONSTRAINT documents_upload_id_fkey FOREIGN KEY (upload_id) REFERENCES uploads(id) ON DELETE CASCADE
 );
+CREATE INDEX documents_upload_id_idx ON public.documents (upload_id);
 
 -- Table for storing indexed chunks of text from documents for vector search.
 CREATE TABLE doc_chunks (
@@ -30,6 +45,7 @@ CREATE TABLE doc_chunks (
 	source_path text NULL,
 	highlight_anchor text NULL,
 	embedding public.vector NULL,
+	tenant_id text NULL,
 	created_at timestamptz DEFAULT now() NULL,
 	CONSTRAINT doc_chunks_pkey PRIMARY KEY (id),
 	CONSTRAINT doc_chunks_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id) ON DELETE CASCADE

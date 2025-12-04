@@ -14,20 +14,49 @@ mcp = FastMCP("MyDualDatabaseServer")
 def load_config():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(base_dir, "config", "db_config.json")
-    
-    try:
-        # utf-8-sig로 인코딩 문제 해결
-        with open(config_path, 'r', encoding='utf-8-sig') as f:
-            # 로그는 stderr로 출력해야 MCP 통신을 방해하지 않습니다.
-            print(f"[Init] Loading config from: {config_path}", file=sys.stderr)
+    example_path = os.path.join(base_dir, "config", "db_config.example.json")
+
+    def _load_json(path: str):
+        with open(path, "r", encoding="utf-8-sig") as f:
+            print(f"[Init] Loading config from: {path}", file=sys.stderr)
             return json.load(f)
+
+    # 1) Try real config
+    try:
+        if os.path.exists(config_path):
+            return _load_json(config_path)
     except Exception as e:
-        print(f"[Error] Config Load Failed: {e}", file=sys.stderr)
-        sys.exit(1)
+        print(f"[Warn] Failed reading {config_path}: {e}", file=sys.stderr)
+
+    # 2) Fallback to example
+    try:
+        if os.path.exists(example_path):
+            print("[Warn] Using example config (config/db_config.json not found). Override with environment variables or create the real file.", file=sys.stderr)
+            return _load_json(example_path)
+    except Exception as e:
+        print(f"[Warn] Failed reading {example_path}: {e}", file=sys.stderr)
+
+    # 3) Last resort: environment variables
+    print("[Warn] No config files found. Building config from environment variables.", file=sys.stderr)
+    return {
+        "postgres": {
+            "host": os.getenv("POSTGRES_HOST", "localhost"),
+            "port": int(os.getenv("POSTGRES_PORT", "5432")),
+            "dbname": os.getenv("POSTGRES_DB", "postgres"),
+            "user": os.getenv("POSTGRES_USER", "postgres"),
+            "password": os.getenv("POSTGRES_PASSWORD", ""),
+        },
+        "neo4j": {
+            "uri": os.getenv("NEO4J_URI", "bolt://localhost:7687"),
+            "user": os.getenv("NEO4J_USER", "neo4j"),
+            "password": os.getenv("NEO4J_PASSWORD", ""),
+        },
+    }
 
 config = load_config()
-PG_CONFIG = config.get("postgres")
-NEO_CONFIG = config.get("neo4j")
+PG_CONFIG = dict(config.get("postgres") or {})
+PG_CONFIG.setdefault("connect_timeout", int(os.getenv("POSTGRES_CONNECT_TIMEOUT", "5")))
+NEO_CONFIG = dict(config.get("neo4j") or {})
 
 # ==========================================
 # [NEW] 3. 접속 테스트 함수
@@ -47,7 +76,7 @@ def test_connections():
     try:
         uri = NEO_CONFIG.get("uri")
         auth = (NEO_CONFIG.get("user"), NEO_CONFIG.get("password"))
-        driver = GraphDatabase.driver(uri, auth=auth)
+        driver = GraphDatabase.driver(uri, auth=auth, connection_timeout=int(os.getenv("NEO4J_TIMEOUT", "5")))
         driver.verify_connectivity() # 연결 확인
         driver.close()
         print("✅ Neo4j   : Connected Successfully!", file=sys.stderr)
@@ -95,7 +124,7 @@ def query_neo4j(cypher_query: str) -> str:
     try:
         uri = NEO_CONFIG.get("uri")
         auth = (NEO_CONFIG.get("user"), NEO_CONFIG.get("password"))
-        driver = GraphDatabase.driver(uri, auth=auth)
+        driver = GraphDatabase.driver(uri, auth=auth, connection_timeout=int(os.getenv("NEO4J_TIMEOUT", "5")))
         
         def execute_tx(tx, query):
             result = tx.run(query)

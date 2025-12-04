@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>PDF Viewer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { margin: 0; background-color: #525659; display: flex; justify-content: center; align-items: flex-start; }
+    #pdf-container {
+      margin-top: 20px;
+      position: relative;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    #pdf-canvas, #highlight-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      direction: ltr;
+    }
+    #error {
+      color: #fff;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Noto Sans, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      margin-top: 40px;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  </script>
+</head>
+<body>
+  <div id="pdf-container">
+    <canvas id="pdf-canvas"></canvas>
+    <canvas id="highlight-canvas"></canvas>
+  </div>
+  <div id="error"></div>
+
+  <script>
+    function resolvePdfUrlFromParams() {
+      const params = new URLSearchParams(window.location.search);
+      let file = params.get('file') || '';
+      try { file = decodeURIComponent(file); } catch {}
+      file = file.replace(/\\/g, '/').replace(/^\/+/, '');
+
+      // If absolute-like path or contains uploads/, always resolve to /uploads/<relative>
+      let relative = file.includes('uploads/') ? file.split('uploads/').pop() : file;
+      // Guard against accidental absolute prefixes like "C:/..."
+      relative = relative.replace(/^([A-Za-z]:\\|[A-Za-z]:\/)/, '').replace(/^\/+/, '');
+
+      return '/uploads/' + relative;
+    }
+
+    async function renderPdf() {
+      const container = document.getElementById('pdf-container');
+      const errBox = document.getElementById('error');
+      const pdfCanvas = document.getElementById('pdf-canvas');
+      const highlightCanvas = document.getElementById('highlight-canvas');
+
+      const params = new URLSearchParams(window.location.search);
+      const pageNum = parseInt(params.get('page') || '1', 10);
+      const query = (params.get('query') || '').trim();
+
+      const url = encodeURI(resolvePdfUrlFromParams());
+
+      try {
+        const pdf = await pdfjsLib.getDocument(url).promise;
+        const pageIndex = Math.min(Math.max(pageNum, 1), pdf.numPages);
+        const page = await pdf.getPage(pageIndex);
+
+        const scale = 1.5;
+        const viewport = page.getViewport({ scale });
+
+        container.style.width = viewport.width + 'px';
+        container.style.height = viewport.height + 'px';
+
+        pdfCanvas.width = highlightCanvas.width = viewport.width;
+        pdfCanvas.height = highlightCanvas.height = viewport.height;
+
+        const pdfContext = pdfCanvas.getContext('2d');
+        await page.render({ canvasContext: pdfContext, viewport }).promise;
+
+        if (query) {
+          await highlightText(page, viewport, query, highlightCanvas);
+        }
+      } catch (error) {
+        console.error('Error rendering PDF:', error);
+        errBox.textContent = 'PDF를 로드할 수 없습니다. 파일 경로를 확인하세요.';
+      }
+    }
+
+    async function highlightText(page, viewport, searchText, highlightCanvas) {
+      const textContent = await page.getTextContent();
+      const highlightContext = highlightCanvas.getContext('2d');
+      highlightContext.fillStyle = 'rgba(255, 255, 0, 0.4)';
+
+      const normalize = (str) => str.replace(/\\s+/g, '').toLowerCase();
+      const searchWords = normalize(searchText).split(/\\s+/).filter(Boolean);
+      if (searchWords.length === 0) return;
+
+      const textItems = textContent.items.map(item => ({
+        text: normalize(item.str),
+        transform: item.transform,
+        width: item.width,
+        height: item.height,
+        originalText: item.str
+      }));
+
+      let matchStartIndex = -1;
+      let currentMatch = [];
+
+      for (let i = 0; i < textItems.length; i++) {
+        const itemText = textItems[i].text;
+        if (!itemText) continue;
+
+        if (matchStartIndex === -1) {
+          if (searchWords[0].startsWith(itemText)) {
+            matchStartIndex = i;
+            currentMatch.push(textItems[i]);
+          }
+        } else {
+          currentMatch.push(textItems[i]);
+        }
+
+        const combinedText = currentMatch.map(it => it.text).join('');
+
+        if (searchWords.join('') === combinedText) {
+          drawHighlights(currentMatch, viewport, highlightContext);
+          matchStartIndex = -1;
+          currentMatch = [];
+        } else if (!searchWords.join('').startsWith(combinedText)) {
+          matchStartIndex = -1;
+          currentMatch = [];
+          i--; // retry current as new start
+        }
+      }
+    }
+
+    function drawHighlights(items, viewport, context) {
+      items.forEach(item => {
+        const [scaleX, , , scaleY, offsetX, offsetY] = item.transform;
+        const x = offsetX;
+        const y = viewport.height - offsetY - (item.height * scaleY);
+        context.fillRect(x, y, item.width * scaleX, item.height * scaleY);
+      });
+    }
+
+    renderPdf();
+  </script>
+</body>
+</html>

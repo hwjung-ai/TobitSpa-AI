@@ -14,9 +14,17 @@ from typing import List, Dict, Any
 from llama_index.core import Document, get_response_synthesizer
 from llama_index.core.query_engine.router_query_engine import RouterQueryEngine
 from llama_index.core.tools import QueryEngineTool, ToolMetadata
-from llama_index.core.response.schema import Response
+# Response 위치가 버전에 따라 달라서 가급적 안정된 경로로 import
+try:
+    from llama_index.core.response import Response
+except Exception:
+    # 구버전 호환 경로
+    from llama_index.core.response.schema import Response  # type: ignore
 
-from data_sources import AssetDataSource, WorkHistoryDataSource, GraphDataSource, ManualVectorSource
+from data_sources.asset import AssetDataSource
+from data_sources.work_history import WorkHistoryDataSource
+from data_sources.graph import GraphDataSource
+from data_sources.manual_vector import ManualVectorSource
 from llama_index_integration import LlamaIndexManualRetriever
 
 logger = logging.getLogger(__name__)
@@ -150,6 +158,11 @@ class MultiSourceRouter:
                     "score": float(getattr(sn, "score", 0) or 0),
                 })
             sources = self._boost_sources(user_query, sources)
+            if not sources or not text or str(text).strip().lower() in ["empty response", "none", ""]:
+                # Router가 비어있으면 수동 매뉴얼 벡터 검색으로 한 번 더 시도
+                manual_hits = self.manual_ds_fallback.search_manuals(user_query, top_k=3)
+                sources = self._boost_sources(user_query, manual_hits)
+                text = text or "\n".join([f"- {h['title']} (score={h['score']:.3f})" for h in manual_hits]) or "관련 데이터를 찾지 못했습니다."
             return {"text": text, "sources": sources}
         except Exception as e:
             logger.warning("RouterQueryEngine failed, fallback summary: %s", e)

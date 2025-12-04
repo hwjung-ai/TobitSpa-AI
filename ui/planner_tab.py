@@ -3,7 +3,7 @@ import datetime
 import pandas as pd
 import panel as pn
 
-from project_planner import PlannerStore
+from stores.planner_store import PlannerStore
 
 
 def _normalize_id(value):
@@ -132,13 +132,13 @@ def build_planner_tab(planner_store: PlannerStore):
     def build_tabulator(value, config=None):
         for selectable_opt in (True, 'checkbox', 1):
             try:
-                kwargs = dict(show_index=False, selectable=selectable_opt, sizing_mode='stretch_both')
+                kwargs = dict(show_index=False, selectable=selectable_opt, sizing_mode='stretch_both', css_classes=['planner-grid'])
                 if config:
                     kwargs["configuration"] = config
                 return pn.widgets.Tabulator(value, **kwargs)
             except Exception:
                 continue
-        kwargs = dict(show_index=False, sizing_mode='stretch_both')
+        kwargs = dict(show_index=False, sizing_mode='stretch_both', css_classes=['planner-grid'])
         if config:
             kwargs["configuration"] = config
         return pn.widgets.Tabulator(value, **kwargs)
@@ -148,6 +148,7 @@ def build_planner_tab(planner_store: PlannerStore):
             show_index=False,
             selectable=True,
             sizing_mode='stretch_both',
+            css_classes=['planner-grid'],
         )
         if config:
             kwargs["configuration"] = config
@@ -190,6 +191,7 @@ def build_planner_tab(planner_store: PlannerStore):
             tree_rows,
             config={
                 "layout": "fitColumns",
+                "rowHeight": 18,
                 "dataTree": True,
                 "dataTreeChildField": "_children",
                 "dataTreeColumn": "title",
@@ -206,6 +208,7 @@ def build_planner_tab(planner_store: PlannerStore):
             pd.DataFrame(build_table_rows(), columns=["title", "order", "type", "status", "owner", "due", "path", "id"]),
             config={
                 "layout": "fitColumns",
+                "rowHeight": 18,
                 "columnDefaults": {"headerSort": False, "editor": False},
                 "columns": planner_columns_plain,
             },
@@ -215,6 +218,72 @@ def build_planner_tab(planner_store: PlannerStore):
         planner_table.hidden_columns = ["id", "parent_id", "_children", "path"]
     except Exception:
         pass
+
+    # Compact grid CSS (single source of truth)
+    COMPACT_GRID_CSS = """
+.tabulator, .tabulator * {
+  font-size: 12px !important;
+  line-height: 16px !important;
+  color: #111 !important;
+}
+.tabulator .tabulator-row {
+  min-height: 20px !important;
+}
+.tabulator .tabulator-row .tabulator-cell {
+  min-height: 20px !important;
+  padding: 3px 5px !important;
+  line-height: 16px !important;
+}
+.tabulator .tabulator-row.tabulator-selected .tabulator-cell,
+.tabulator .tabulator-row.tabulator-selected .tabulator-cell *,
+.tabulator .tabulator-row.tabulator-selected .tabulator-tree-branch {
+  color: #fff !important;
+}
+.tabulator .tabulator-header .tabulator-col {
+  height: 22px !important;
+  line-height: 16px !important;
+}
+.tabulator .tabulator-header .tabulator-col .tabulator-col-content {
+  padding: 3px 5px !important;
+  line-height: 16px !important;
+}
+"""
+    # Attach to Tabulator stylesheets (inside shadow DOM, but may be overridden by theme order)
+    planner_table.stylesheets = (getattr(planner_table, "stylesheets", None) or []) + [COMPACT_GRID_CSS]
+    # Force last-write-wins by injecting after render into the Tabulator shadow root
+    grid_style_injector = pn.pane.HTML(
+        f"""
+<style>{COMPACT_GRID_CSS}</style>
+<script>
+(function() {{
+  const css = `{COMPACT_GRID_CSS.replace('`', '\\`')}`;
+  function inject() {{
+    document.querySelectorAll('.planner-grid').forEach(el => {{
+      const root = el.shadowRoot;
+      if (!root) return;
+      let style = root.querySelector('#planner-grid-override');
+      if (!style) {{
+        style = document.createElement('style');
+        style.id = 'planner-grid-override';
+        root.appendChild(style);
+      }}
+      style.textContent = css;
+    }});
+  }}
+  const obs = new MutationObserver(inject);
+  if (document.body) {{
+    obs.observe(document.body, {{ childList: true, subtree: true }});
+  }} else {{
+    window.addEventListener('DOMContentLoaded', () => obs.observe(document.body, {{ childList: true, subtree: true }}));
+  }}
+  inject();
+}})();
+</script>
+""",
+        height=0,
+        sizing_mode="stretch_width",
+        margin=0,
+    )
     sel_target = pn.widgets.Select(name="선택/수정 대상", options=build_flat_options(), value=None, sizing_mode='stretch_width')
     sel_target_display = pn.widgets.TextInput(name="선택 항목 (표에서 선택)", value="", sizing_mode='stretch_width')
     sel_parent = pn.widgets.Select(
@@ -406,10 +475,10 @@ def build_planner_tab(planner_store: PlannerStore):
 
         refresh_planner(f"{len(targets)}건 삭제 완료.")
 
-    btn_add = pn.widgets.Button(name="추가", button_type="success", width=60, height=26)
-    btn_update = pn.widgets.Button(name="저장", button_type="primary", width=60, height=26)
-    btn_delete = pn.widgets.Button(name="삭제", button_type="danger", width=60, height=26)
-    btn_reload = pn.widgets.Button(name="리로드", button_type="default", width=70, height=26)
+    btn_add = pn.widgets.Button(name="추가", button_type="success", width=60, height=32)
+    btn_update = pn.widgets.Button(name="저장", button_type="primary", width=60, height=32)
+    btn_delete = pn.widgets.Button(name="삭제", button_type="danger", width=60, height=32)
+    btn_reload = pn.widgets.Button(name="리로드", button_type="default", width=70, height=32)
 
     btn_add.on_click(on_add)
     btn_update.on_click(on_update)
@@ -428,19 +497,19 @@ def build_planner_tab(planner_store: PlannerStore):
 
     for w in (sel_target_display, sel_parent, inp_title, sel_type, sel_status, inp_owner, inp_due):
         existing_styles = w.styles or {}
-        existing_styles.update({"font-size": "11px", "color": "#212121"})
+        existing_styles.update({"font-size": "12px", "color": "#212121"})
         w.width = None
         w.sizing_mode = 'stretch_width'
         w.styles = existing_styles
     inp_notes.width = None
     inp_notes.sizing_mode = 'stretch_width'
-    inp_notes.rows = 10
-    inp_notes.height = 250
-    inp_notes.styles = {"font-size": "11px", "color": "#212121", "min-height": "250px", "resize": "vertical"}
+    inp_notes.rows = 12
+    inp_notes.height = 320
+    inp_notes.styles = {"font-size": "12px", "color": "#212121", "min-height": "320px", "resize": "vertical"}
 
     btn_add.height = btn_update.height = btn_delete.height = btn_reload.height = 24
     for idx, b in enumerate((btn_add, btn_update, btn_delete, btn_reload)):
-        b.styles = {"font-weight": "500", "font-size": "9px", "padding": "0px 8px", "line-height": "9px"}
+        b.styles = {"font-weight": "500", "font-size": "12px", "padding": "0px 8px", "line-height": "12px"}
         b.margin = (0, 8 if idx < 3 else 0, 0, 0)
     btn_reload.button_type = "warning"
 
@@ -450,12 +519,12 @@ def build_planner_tab(planner_store: PlannerStore):
             f"**{label}**",
             width=80,
             align='center',
-            styles={'font-size': '12px', 'color': '#333', 'text-align': 'right', 'margin-right': '10px'}
+            styles={'font-size': '12px', 'color': '#333', 'text-align': 'right', 'margin-right': '8px'}
         )
         return pn.Row(
             label_pane,
             widget,
-            sizing_mode='stretch_width', align='center', margin=(0, 10, 8, 10)
+            sizing_mode='stretch_width', align='center', margin=(0, 8, 4, 8)
         )
 
     btn_row = pn.Row(
@@ -464,7 +533,7 @@ def build_planner_tab(planner_store: PlannerStore):
         pn.Spacer(),
         sizing_mode='stretch_width',
         align='center',
-        margin=(12, 10, 4, 10),
+        margin=(8, 10, 2, 10),
     )
 
     planner_right = pn.Column(
@@ -481,7 +550,7 @@ def build_planner_tab(planner_store: PlannerStore):
         planner_msg,
         sizing_mode='stretch_both',
         css_classes=['planner-right'],
-        styles={'margin-left': '12px'},
+        styles={'margin-left': '12px', 'gap': '4px'},
     )
     planner_panel = pn.Column(
         pn.Row(
@@ -491,10 +560,10 @@ def build_planner_tab(planner_store: PlannerStore):
             styles={'height': '100%'},
             css_classes=['planner-split'],
         ),
+        grid_style_injector,
         sizing_mode='stretch_both',
         styles={'padding': '6px', 'height': '100%'}
     )
 
     refresh_planner("Planner를 로드했습니다.")
     return planner_panel
-

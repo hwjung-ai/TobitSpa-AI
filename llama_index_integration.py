@@ -3,9 +3,10 @@ from typing import List, Dict, Any, Optional
 
 from llama_index.core import Document, VectorStoreIndex, StorageContext, Settings
 from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.vector_stores.psycopg import PGVectorStore
+from llama_index.vector_stores.postgres import PGVectorStore
 
-from data_sources import _load_settings, _compute_embedding
+from config.settings import load_settings
+from db.embedding import compute_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -13,23 +14,26 @@ class LlamaIndexManualRetriever:
     """Wraps doc_chunks (pgvector) with LlamaIndex for semantic search."""
 
     def __init__(self):
-        cfg = _load_settings()
+        cfg = load_settings()
         pg_cfg = cfg["postgres"]
-        self.pgvector = PGVectorStore.from_params(
-            database=pg_cfg["dbname"],
-            host=pg_cfg["host"],
-            port=pg_cfg["port"],
-            user=pg_cfg["user"],
-            password=pg_cfg["password"],
-            table_name="doc_chunks",
-            vector_column="embedding",
-            text_column="content",
-            id_column="id",
-            embed_dim=None,  # infer from table
-        )
+        try:
+            # 일부 버전은 컬럼명을 받지 않고 기본 스키마(embedding, id, content)를 가정한다.
+            self.pgvector = PGVectorStore.from_params(
+                database=pg_cfg["dbname"],
+                host=pg_cfg["host"],
+                port=pg_cfg["port"],
+                user=pg_cfg["user"],
+                password=pg_cfg["password"],
+                table_name="doc_chunks",
+            )
+        except Exception as e:
+            logger.warning("PGVectorStore 초기화 실패, fallback 사용: %s", e)
+            self.pgvector = None
         Settings.embed_model = OpenAIEmbedding(model=cfg.get("embed_model", "text-embedding-3-small"))
 
     def build_index(self):
+        if not self.pgvector:
+            raise RuntimeError("PGVectorStore가 초기화되지 않았습니다.")
         storage_context = StorageContext.from_defaults(vector_store=self.pgvector)
         return VectorStoreIndex.from_vector_store(self.pgvector, storage_context=storage_context)
 
@@ -38,6 +42,8 @@ class LlamaIndexManualRetriever:
             index = self.build_index()
             retriever = index.as_retriever(similarity_top_k=top_k)
             nodes = retriever.retrieve(query)
+            if not nodes:
+                raise ValueError("빈 검색 결과")
         except Exception as e:
             logger.warning("LlamaIndex search failed, falling back to manual embedding: %s", e)
             return self._fallback_search(query, top_k)
@@ -56,7 +62,7 @@ class LlamaIndexManualRetriever:
 
     def _fallback_search(self, query: str, top_k: int) -> List[Dict[str, Any]]:
         """Fallback to manual embedding + SQL if LlamaIndex fails."""
-        from data_sources import ManualVectorSource
+        from data_sources.manual_vector import ManualVectorSource
         hits = ManualVectorSource().search_manuals(query, top_k=top_k)
         return self._boost_and_sort(query, hits, top_k)
 
